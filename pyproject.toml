@@ -1,0 +1,10 @@
+[project]
+name = "pengeflyt"
+version = "0.1.0"
+description = "Personal finance Google Sheets generator and tracker"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-auth>=2.56.0",
+    "gspread>=6.2.1",
+]
