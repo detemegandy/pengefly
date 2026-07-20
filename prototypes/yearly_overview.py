@@ -57,26 +57,32 @@ FIXED = [
     ("Barnehage",         3000),
 ]
 
-# (name, monthly_budgets[12], jun_actual)
-# monthly_budgets: list of 12 values — change value in a month = override; same = carry-forward
-# orange highlight fires on the FIRST month where value differs from previous month
+# (name, budgets[12], actuals[12])
+# budgets: carry-forward plan — orange on first change, grey for future months
+# actuals: actual spend per month; None = no data yet (future or not yet entered)
+# Closed months show actual (colored vs budget). Future months show budget (grey, orange on change).
 FLEX = [
     ("Groceries",
      [13000,13000,13000,13000,13000,13000,13000,14000,14000,14000,14000,14000],
-     4622),   # Aug budget increase highlighted
+     [11200,13800,12400,13100,14200, 4622,  None, None, None, None, None, None]),
     ("Entertainment",
      [1000,1000,1000,1000,1000,1000,1500,1500,1500,1000,1000,1000],
-     3591),   # Jul increase, Oct drop back
+     [  820, 1240,  680, 1100,  890, 3591,  None, None, None, None, None, None]),
     ("Shopping",
-     [3000]*12, 1156),
+     [3000]*12,
+     [ 2800, 1900, 4200, 2400, 3100, 1156,  None, None, None, None, None, None]),
     ("Other",
-     [3000]*12,  237),
+     [3000]*12,
+     [  450,  220, 1800,  680,  340,  237,  None, None, None, None, None, None]),
     ("Media",
-     [288]*12,     0),
+     [288]*12,
+     [  288,  288,  288,  288,  288,    0,  None, None, None, None, None, None]),
     ("Liana",
-     [2000]*12, 2158),
+     [2000]*12,
+     [ 1800, 3200,  800, 2200, 1600, 2158,  None, None, None, None, None, None]),
     ("Pets",
-     [1500]*12,  850),
+     [1500]*12,
+     [    0,  850,    0,    0, 1200,  850,  None, None, None, None, None, None]),
 ]
 
 # SENT[transfer_index][month_index] = amount in that cell (plan or actual), always filled.
@@ -205,12 +211,12 @@ def add_legend(sid, rq, dt, tx_row, fixed_row, flex_row):
     entry(fixed_row+1, "Plan amounts only — budget vs actual coming",   WHITE)
 
     # FLEX BUDGET — aligns with FLEX BUDGET section header
-    entry(flex_row,   "— FLEX BUDGET —",                                BLUE_LIGHT, bold=True)
+    entry(flex_row,   "— FLEX BUDGET  (Budget col = carry-forward reference) —", BLUE_LIGHT, bold=True)
     entry(flex_row+1, "Actual < 80 % of budget  (well under)",          GREEN,     GREEN_DARK)
     entry(flex_row+2, "Actual 80–100 % of budget  (on track, close)",   AMBER)
     entry(flex_row+3, "Actual > 100 % of budget  (over!)",              RED_LIGHT)
-    entry(flex_row+4, "Budget changed this month  (carry-forward break)", ORANGE)
-    entry(flex_row+5, "Future month — carry-forward plan",              GREY,      GREY_TEXT)
+    entry(flex_row+4, "Future: budget changed this month  (new plan)",   ORANGE)
+    entry(flex_row+5, "Future: carry-forward plan  (same as previous)",  GREY,      GREY_TEXT)
 
 
 def build_yearly(sid):
@@ -235,7 +241,7 @@ def build_yearly(sid):
     rq.append(rpt(sid, 1, 0, 1, NCOLS, fmt(bg=BLUE_LIGHT, bold=True, halign="CENTER")))
     dt.append((1, LABEL_COL, ""))
     dt.append((1, ACCT_COL, "Account"))
-    dt.append((1, DEFAULT_COL, "Default"))
+    dt.append((1, DEFAULT_COL, "Budget"))
     for i, m in enumerate(MONTHS):
         state = MONTH_STATE[i]
         bg = BLUE_LIGHT if state == "closed" else (BLUE_PALE if state == "open" else GREY)
@@ -366,53 +372,66 @@ def build_yearly(sid):
     flex_header_row = row
     rq.append(mrg(sid, row, 0, row+1, NCOLS))
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
-    dt.append((row, 0, "  FLEX BUDGET  (orange = budget changed this month; grey = future plan)")); row += 1
+    dt.append((row, 0, "  FLEX BUDGET")); row += 1
 
-    total_flex_default = sum(budgets[0] for _, budgets, _ in FLEX)
-    total_flex_actual  = sum(actual    for _, _,       actual in FLEX)
+    total_flex_budget = sum(budgets[0] for _, budgets, _ in FLEX)
+    total_flex_actual = sum(
+        sum(a for a in actuals if a is not None) for _, _, actuals in FLEX
+    )
 
-    for i, (name, budgets, jun_actual) in enumerate(FLEX):
+    for i, (name, budgets, actuals) in enumerate(FLEX):
         bg_base = BLUE_PALE if i%2==0 else WHITE
         rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=bg_base)))
         dt.append((row, LABEL_COL, name))
-        dt.append((row, DEFAULT_COL, budgets[0]))
+        dt.append((row, DEFAULT_COL, budgets[0]))   # Budget column = carry-forward reference
 
         for m in range(12):
-            col  = mcol(m)
-            val  = budgets[m]
-            prev = budgets[m-1] if m > 0 else budgets[0]
-            state = MONTH_STATE[m]
+            budget = budgets[m]
+            actual = actuals[m]
+            state  = MONTH_STATE[m]
+            prev_b = budgets[m-1] if m > 0 else budgets[0]
 
             if state == "future":
-                cell_bg = GREY
-                cell_fg = GREY_TEXT
-            elif m == 5 and jun_actual:   # Jun — show actual, color vs budget
-                pct = jun_actual / val if val else 0
-                cell_bg = GREEN if pct < 0.8 else (AMBER if pct <= 1.0 else RED_LIGHT)
-                cell_fg = None
-            elif val != prev:             # budget changed here — first occurrence
-                cell_bg = ORANGE
-                cell_fg = None
+                # Show budget plan; orange if it changed from previous month
+                display = budget
+                if budget != prev_b:
+                    cell_bg, cell_fg = ORANGE, None
+                else:
+                    cell_bg, cell_fg = GREY, GREY_TEXT
+            elif actual is not None:
+                # Closed/open month with actual data — color vs budget
+                pct = actual / budget if budget else 0
+                if pct < 0.8:
+                    cell_bg, cell_fg = GREEN, GREEN_DARK
+                elif pct <= 1.0:
+                    cell_bg, cell_fg = AMBER, None
+                else:
+                    cell_bg, cell_fg = RED_LIGHT, None
+                display = actual
             else:
-                cell_bg = bg_base
-                cell_fg = None
+                # Open month, no actual yet — show budget as reference
+                display = budget
+                cell_bg, cell_fg = AMBER, None
 
             f = fmt(bg=cell_bg, halign="CENTER")
             if cell_fg:
                 f["textFormat"] = {"foregroundColor": cell_fg}
-            rq.append(rpt(sid, row, col, 1, 1, f))
+            rq.append(rpt(sid, row, mcol(m), 1, 1, f))
+            dt.append((row, mcol(m), display))
 
-            display = jun_actual if (m == 5 and jun_actual) else val
-            dt.append((row, col, display))
-
-        dt.append((row, YTD_COL, jun_actual if jun_actual else budgets[0]))
+        ytd_actual = sum(a for a in actuals if a is not None)
+        dt.append((row, YTD_COL, ytd_actual))
         row += 1
 
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=AMBER, bold=True)))
     dt.append((row, LABEL_COL, "Total flex"))
-    dt.append((row, DEFAULT_COL, total_flex_default))
+    dt.append((row, DEFAULT_COL, total_flex_budget))
     for m in range(12):
-        dt.append((row, mcol(m), sum(b[m] for _, b, _ in FLEX)))
+        month_total = sum(
+            (actuals[m] if actuals[m] is not None else budgets[m])
+            for _, budgets, actuals in FLEX
+        )
+        dt.append((row, mcol(m), month_total))
     dt.append((row, YTD_COL, total_flex_actual))
     row += 2  # +spacer
 
@@ -421,7 +440,7 @@ def build_yearly(sid):
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  BUFFER")); row += 1
 
-    total_out_default = total_tx_default + total_fixed + total_flex_default
+    total_out_default = total_tx_default + total_fixed + total_flex_budget
     for m in range(12):
         income = SALARY["Andreas"][m] + SALARY["Mona"][m]
         out    = total_tx_default + total_fixed + sum(b[m] for _, b, _ in FLEX)
