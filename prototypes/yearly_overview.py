@@ -186,34 +186,31 @@ def to_a1(row, col):
     return f"'Yearly 2026'!{col_letter}{row+1}"
 
 
-def add_legend(sid, rq, dt):
-    """Color legend panel in column R (LEGEND_COL), starting at row 0."""
-    entries = [
-        # (label text,                                           bg,        fg,        bold)
-        ("COLOR LEGEND",                                         BLUE_DARK, WHITE,     True),
-        ("",                                                     WHITE,     None,      False),
-        ("— TRANSFERS —",                                        BLUE_LIGHT,None,      True),
-        ("Sent as planned  (closed, matches carry-forward)",     GREEN,     GREEN_DARK,False),
-        ("Current month — plan not yet confirmed",               AMBER,     None,      False),
-        ("Changed from previous month (change or revert)",       ORANGE,    None,      False),
-        ("Future month — carry-forward plan",                    GREY,      GREY_TEXT, False),
-        ("",                                                     WHITE,     None,      False),
-        ("— FLEX BUDGET —",                                      BLUE_LIGHT,None,      True),
-        ("Actual < 80 % of budget  (well under)",                GREEN,     GREEN_DARK,False),
-        ("Actual 80–100 % of budget  (on track, close)",         AMBER,     None,      False),
-        ("Actual > 100 % of budget  (over!)",                    RED_LIGHT, None,      False),
-        ("Budget changed this month  (carry-forward break)",     ORANGE,    None,      False),
-        ("Future month — carry-forward plan",                    GREY,      GREY_TEXT, False),
-        ("",                                                     WHITE,     None,      False),
-        ("— BUFFER —",                                           BLUE_LIGHT,None,      True),
-        ("Income covers all outgoing  (positive buffer)",        GREEN,     GREEN_DARK,False),
-        ("Spending exceeds income  (negative buffer)",           RED_LIGHT, None,      False),
-    ]
-    for i, (text, bg, fg, bold) in enumerate(entries):
-        f = fmt(bg=bg, bold=bold, fg=fg)
-        rq.append(rpt(sid, i, LEGEND_COL, 1, 1, f))
+def add_legend(sid, rq, dt, tx_row, fixed_row, flex_row):
+    """Color legend anchored to section header rows so it aligns with the main sheet."""
+    def entry(r, text, bg, fg=None, bold=False):
+        rq.append(rpt(sid, r, LEGEND_COL, 1, 1, fmt(bg=bg, bold=bold, fg=fg)))
         if text:
-            dt.append((i, LEGEND_COL, f"  {text}"))
+            dt.append((r, LEGEND_COL, f"  {text}"))
+
+    # TRANSFERS — aligns with TRANSFERS section header
+    entry(tx_row,   "— TRANSFERS —",                                   BLUE_LIGHT, bold=True)
+    entry(tx_row+1, "Sent as planned  (closed, matches carry-forward)", GREEN,     GREEN_DARK)
+    entry(tx_row+2, "Current month — plan not yet confirmed",           AMBER)
+    entry(tx_row+3, "Changed from previous month  (change or revert)",  ORANGE)
+    entry(tx_row+4, "Future month — carry-forward plan",                GREY,      GREY_TEXT)
+
+    # FIXED EXPENSES — aligns with FIXED EXPENSES section header
+    entry(fixed_row,   "— FIXED EXPENSES —",                           BLUE_LIGHT, bold=True)
+    entry(fixed_row+1, "Plan amounts only — budget vs actual coming",   WHITE)
+
+    # FLEX BUDGET — aligns with FLEX BUDGET section header
+    entry(flex_row,   "— FLEX BUDGET —",                                BLUE_LIGHT, bold=True)
+    entry(flex_row+1, "Actual < 80 % of budget  (well under)",          GREEN,     GREEN_DARK)
+    entry(flex_row+2, "Actual 80–100 % of budget  (on track, close)",   AMBER)
+    entry(flex_row+3, "Actual > 100 % of budget  (over!)",              RED_LIGHT)
+    entry(flex_row+4, "Budget changed this month  (carry-forward break)", ORANGE)
+    entry(flex_row+5, "Future month — carry-forward plan",              GREY,      GREY_TEXT)
 
 
 def build_yearly(sid):
@@ -297,6 +294,7 @@ def build_yearly(sid):
     row += 2  # +spacer
 
     # ── TRANSFERS ─────────────────────────────────────────────────────────────
+    tx_header_row = row
     rq.append(mrg(sid, row, 0, row+1, NCOLS))
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  TRANSFERS  (from Joint Salary)")); row += 1
@@ -340,6 +338,7 @@ def build_yearly(sid):
     row += 2  # +spacer
 
     # ── FIXED EXPENSES ────────────────────────────────────────────────────────
+    fixed_header_row = row
     rq.append(mrg(sid, row, 0, row+1, NCOLS))
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  FIXED EXPENSES")); row += 1
@@ -364,6 +363,7 @@ def build_yearly(sid):
     row += 2  # +spacer
 
     # ── FLEX BUDGET ───────────────────────────────────────────────────────────
+    flex_header_row = row
     rq.append(mrg(sid, row, 0, row+1, NCOLS))
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  FLEX BUDGET  (orange = budget changed this month; grey = future plan)")); row += 1
@@ -444,7 +444,7 @@ def build_yearly(sid):
     dt.append((row, LABEL_COL, "  ↳ Extra / discretionary"))
     row += 1
 
-    add_legend(sid, rq, dt)
+    add_legend(sid, rq, dt, tx_header_row, fixed_header_row, flex_header_row)
 
     return rq, dt
 
