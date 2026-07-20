@@ -192,7 +192,9 @@ def build_tracker(sid):
     # ── Rows 4-11: setup block ─────────────────────────────────────────────────
     # editable=False → faint green tint (computed cell, do not edit manually)
     setup = [
-        ("Closed through",            CLOSED_THROUGH_FX, CLOSED_THROUGH_FX, False),
+        # Closed through: written as static fallback here; run_all.py's cross-ref
+        # patch overwrites B4/H4 with the live XLOOKUP formula after all tabs exist.
+        ("Closed through",            LAST_CLOSED, LAST_CLOSED, False),
         ("Statement balance (NOK)",    45_000,         28_000,          True),
         ("Credit limit (NOK)",         50_000,         30_000,          True),
         ("Remaining credit (NOK)",     "=B6-B5",       "=H6-H5",        False),

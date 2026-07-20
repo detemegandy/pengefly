@@ -223,6 +223,71 @@ def to_a1(row, col):
     return f"'{TAB_NAME}'!{cletter(col)}{row+1}"
 
 
+# ── conditional format helpers ─────────────────────────────────────────────────
+# These replace static Python-applied colors for cells whose value the user can edit.
+
+def _changed_cfrule(sid, row):
+    """
+    ORANGE when a month's value differs from the cell immediately to its left.
+    Applied to the full Jan-Dec range; relative refs shift correctly:
+      - Jan (D): compares to DEFAULT_COL (C) = the planned default
+      - Feb-Dec: compares to the previous month
+    """
+    sr       = row + 1
+    jan_ltr  = cletter(JAN_COL)      # 'D'
+    prev_ltr = cletter(DEFAULT_COL)  # 'C'
+    return {"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": row, "endRowIndex": row+1,
+                    "startColumnIndex": JAN_COL, "endColumnIndex": JAN_COL+12}],
+        "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA",
+                          "values": [{"userEnteredValue": f"={jan_ltr}{sr}<>{prev_ltr}{sr}"}]},
+            "format": {"backgroundColor": ORANGE},
+        }}, "index": 0}}
+
+def _state_cfrule(sid, row, status_str, bg, fg=None):
+    """
+    Highlight when the month's status-row cell (D3:O3) equals status_str.
+    OFFSET($D$3, 0, COLUMN()-4) walks across the status row aligned to the month columns.
+    """
+    stat    = JAN_COL + 1   # 1-indexed column number of $D$3 (Jan status cell)
+    formula = f'=OFFSET($D$3,0,COLUMN()-{stat})="{status_str}"'
+    f       = {"backgroundColor": bg}
+    if fg:
+        f["textFormat"] = {"foregroundColor": fg}
+    return {"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": row, "endRowIndex": row+1,
+                    "startColumnIndex": JAN_COL, "endColumnIndex": JAN_COL+12}],
+        "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA",
+                          "values": [{"userEnteredValue": formula}]},
+            "format": f,
+        }}, "index": 0}}
+
+def tx_cfrules(sid, row):
+    """
+    CF rules for a TRANSFERS data row.
+    Add in reverse priority order (each uses index=0, so last-added = highest priority):
+      GREEN (lowest) → AMBER → GREY → ORANGE (highest)
+    """
+    return [
+        _state_cfrule(sid, row, "✓ Closed", GREEN, GREEN_DARK),
+        _state_cfrule(sid, row, "Open",     AMBER),
+        _state_cfrule(sid, row, "—",        GREY,  GREY_TEXT),
+        _changed_cfrule(sid, row),
+    ]
+
+def flex_bud_cfrules(sid, row):
+    """
+    CF rules for a FLEX budget row.
+    GREY (lower) → ORANGE (higher priority).
+    """
+    return [
+        _state_cfrule(sid, row, "—", GREY, GREY_TEXT),
+        _changed_cfrule(sid, row),
+    ]
+
+
 def add_legend(sid, rq, dt, tx_row, fixed_row, flex_row):
     """Color legend anchored to section header rows."""
     def entry(r, text, bg, fg=None, bold=False):
@@ -358,22 +423,13 @@ def build_yearly(sid):
         prev = amount
         for m in range(12):
             val = sent_row[m]
-            ms  = MONTH_STATE[m]
-            if val != prev:
-                cell_bg, cell_fg = ORANGE, None
-            elif ms == "future":
-                cell_bg, cell_fg = GREY, GREY_TEXT
-            elif ms == "open":
-                cell_bg, cell_fg = AMBER, None
-            else:
-                cell_bg, cell_fg = GREEN, GREEN_DARK
-            rq.append(rpt(sid, row, mcol(m), 1, 1,
-                          fmt(bg=cell_bg, fg=cell_fg, halign="RIGHT")))
+            rq.append(rpt(sid, row, mcol(m), 1, 1, fmt(bg=bg, halign="RIGHT")))
             if m == 0 or val != prev:
                 dt.append((row, mcol(m), val))
             else:
                 dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
             prev = val
+        rq.extend(tx_cfrules(sid, row))
         row += 1
 
     total_tx_default = sum(a for _, a, _ in TRANSFERS)
@@ -434,19 +490,12 @@ def build_yearly(sid):
         for m in range(12):
             budget = budgets[m]
             prev_b = budgets[m-1] if m > 0 else budgets[0]
-            state  = MONTH_STATE[m]
-            if budget != prev_b:
-                cell_bg, cell_fg = ORANGE, None
-            elif state == "future":
-                cell_bg, cell_fg = GREY, GREY_TEXT
-            else:
-                cell_bg, cell_fg = bg_base, None
-            f = fmt(bg=cell_bg, bold=True, halign="CENTER", fg=cell_fg)
-            rq.append(rpt(sid, row, mcol(m), 1, 1, f))
+            rq.append(rpt(sid, row, mcol(m), 1, 1, fmt(bg=bg_base, bold=True, halign="CENTER")))
             if m == 0 or budget != prev_b:
                 dt.append((row, mcol(m), budget))
             else:
                 dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
+        rq.extend(flex_bud_cfrules(sid, row))
         dt.append((row, YTD_COL, sum(budgets[:6])))
         row += 1
 

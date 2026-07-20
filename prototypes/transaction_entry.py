@@ -66,19 +66,21 @@ DATA_ROW = 14   # 1-indexed first transaction row
 ROWS     = 150  # max transaction rows to reserve for formatting
 
 # Credit card minimum payments for Jun 2026 — auto-populated, flagged for review.
-# Amounts are live formulas referencing the CC Tracker tab so they update when the
-# statement balance or min-payment % changes there.
+# Static amounts are written here; run_all.py's cross-ref patch overwrites the
+# Amount cell with a live formula referencing the CC Tracker tab after all tabs exist.
 # EIKA cells: B5=statement balance, B9=min%, B10=floor
 # Mona cells: H5=statement balance, H9=min%, H10=floor
 _CT = "'Credit Card Tracker'"
-_EIKA_MIN = f"=MAX({_CT}!B10,ROUND({_CT}!B5*{_CT}!B9,0))"
-_MONA_MIN = f"=MAX({_CT}!H10,ROUND({_CT}!H5*{_CT}!H9,0))"
+_EIKA_MIN        = f"=MAX({_CT}!B10,ROUND({_CT}!B5*{_CT}!B9,0))"   # for cross-ref patch
+_MONA_MIN        = f"=MAX({_CT}!H10,ROUND({_CT}!H5*{_CT}!H9,0))"   # for cross-ref patch
+_EIKA_MIN_STATIC = max(250, round(45_000 * 0.03))   # = 1350
+_MONA_MIN_STATIC = max(250, round(28_000 * 0.03))   # = 840
 
 _CC_PAYMENTS = [
-    ("Shared Card", "30.06", "⬇ CC min. payment — EIKA",    _EIKA_MIN, "", "This month",
+    ("Shared Card", "30.06", "⬇ CC min. payment — EIKA",    _EIKA_MIN_STATIC, "", "This month",
      "Needs discussion",
      "Auto-added: min. payment from CC Tracker (statement balance × rate, with floor). Review at month close."),
-    ("Shared Card", "30.06", "⬇ CC min. payment — Mona DNB", _MONA_MIN, "", "This month",
+    ("Shared Card", "30.06", "⬇ CC min. payment — Mona DNB", _MONA_MIN_STATIC, "", "This month",
      "Needs discussion",
      "Auto-added: min. payment from CC Tracker (statement balance × rate, with floor). Review at month close."),
 ]
