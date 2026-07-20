@@ -1,0 +1,33 @@
+# prototypes/private.py.example
+#
+# Copy this file to prototypes/private.py and fill in your real values.
+# private.py is gitignored and never committed.
+#
+# Usage: the prototype scripts try-import this file at startup.
+# If it doesn't exist they fall back to placeholder data (####.##.#####).
+
+# Account numbers — Norwegian format XXXX.XX.XXXXX
+# Keys must match the account names used in config_sheet.py ACCOUNTS list.
+ACCOUNT_NUMBERS = {
+    "Joint Salary":    "####.##.#####",
+    "Shared Card":     "####.##.#####",
+    "Shared Bill":     "####.##.#####",
+    "Shared Credit":   "—",
+    "Personal":        "—",
+    "House & Ins.":    "####.##.#####",
+    "Car Loan":        "####.##.#####",
+    "Saving-General":  "####.##.#####",
+    "Saving-Vacation": "####.##.#####",
+    "Saving-House":    "####.##.#####",
+    "Pets Fund":       "####.##.#####",
+    "SOS":             "####.##.#####",
+    "Liana":           "####.##.#####",
+    "Baby":            "####.##.#####",
+}
+
+# Monthly gross salary per person (NOK), Jan–Dec 2026.
+# Include feriepenger / holiday pay spike in the correct month.
+SALARY = {
+    "Andreas": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "Mona":    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+}
