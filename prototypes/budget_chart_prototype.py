@@ -1,12 +1,14 @@
 """
-PROTOTYPE — budget vs actual chart for the monthly transaction sheet.
+PROTOTYPE — budget vs actual visualization for the monthly transaction sheet.
 
 Answers issue #8: where should the budget vs actual visual comparison live?
 
-This prototype places a grouped column chart (Budget blue, Spent amber) directly
-on the Card Transactions sheet, anchored to the right of the transaction data area.
-The chart references the live SUMPRODUCT formulas in the budget summary (rows 4-10),
-so it updates automatically as transactions are added or removed.
+v3: In-cell SPARKLINE progress bars (one per category row in the budget table).
+    Replaces the raw "%" column with a horizontal bar that fills proportionally
+    to spent/budget — blue when on track, red when over.
+
+    This is how YNAB and Sbanken show it: no separate chart, just each row
+    has its own bar so you read the table and the picture at the same time.
 
 Run: uv run prototypes/budget_chart_prototype.py
 THROWAWAY — do not merge to main.
@@ -22,6 +24,12 @@ import transaction_entry as te
 CREDS_FILE = te.CREDS_FILE
 SCOPES     = te.SCOPES
 SHEET_ID   = te.SHEET_ID
+
+# Budget table layout (1-indexed):
+#   row 3  = header: Category | Budget | Spent | Remaining | % | ⚠ Open
+#   rows 4-10 = 7 category data rows
+_HDR_ROW  = 3
+_DATA_ROW = _HDR_ROW + 1
 
 
 def main():
@@ -40,7 +48,7 @@ def main():
         print(f"Tab '{te.TAB_NAME}' not found — run run_all.py first.")
         return
 
-    # Remove any charts already on this sheet (idempotent rerun)
+    # Remove any chart left over from earlier prototype iterations
     if existing_charts:
         dels = [{"deleteEmbeddedObject": {"objectId": c["chartId"]}}
                 for c in existing_charts]
@@ -48,62 +56,44 @@ def main():
             spreadsheetId=SHEET_ID, body={"requests": dels}).execute()
         print(f"  Removed {len(dels)} existing chart(s)")
 
-    # Budget summary layout (0-indexed rows):
-    #   row 2 = header:  Category | Budget | Spent | Remaining | % | Open
-    #   rows 3-9 = 7 categories
-    hdr_row  = 2
-    data_end = hdr_row + 1 + len(te.CATEGORIES)   # exclusive
+    n_cats = len(te.CATEGORIES)
+    end_row = _DATA_ROW + n_cats - 1
 
-    def src(col_s, col_e):
-        return {"sourceRange": {"sources": [{
-            "sheetId": sid,
-            "startRowIndex": hdr_row,
-            "endRowIndex": data_end,
-            "startColumnIndex": col_s,
-            "endColumnIndex": col_e,
-        }]}}
+    # Column E holds the raw "%" value written by transaction_entry.py.
+    # Replace it with a SPARKLINE formula:
+    #   - fills bar from 0 → 1 using C/B (spent / budget)
+    #   - capped at 1 so an over-budget bar just turns solid red, not wider
+    #   - blue (#4472C4) when under budget, red (#E53935) when over
+    #   - light fill (#E8F0FE) for remaining budget portion
+    sparklines = []
+    for i in range(n_cats):
+        row = _DATA_ROW + i
+        formula = (
+            f'=SPARKLINE(MIN(C{row}/B{row},1),'
+            f'{{"charttype","bar";'
+            f'"max",1;'
+            f'"color1",IF(C{row}>B{row},"#E53935","#4472C4");'
+            f'"color2","#E8F0FE"}})'
+        )
+        sparklines.append([formula])
 
-    BLUE  = {"red": 68/255,  "green": 114/255, "blue": 196/255}
-    AMBER = {"red": 255/255, "green": 192/255, "blue": 0.0}
+    tab = te.TAB_NAME
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range=f"'{tab}'!E{_DATA_ROW}:E{end_row}",
+        valueInputOption="USER_ENTERED",
+        body={"values": sparklines},
+    ).execute()
 
-    req = {"addChart": {"chart": {
-        "spec": {
-            "title": "Budget vs Actual — Jun 2026",
-            "basicChart": {
-                "chartType": "COLUMN",
-                "legendPosition": "BOTTOM_LEGEND",
-                "axis": [
-                    {"position": "BOTTOM_AXIS", "title": "Category"},
-                    {"position": "LEFT_AXIS",   "title": "NOK"},
-                ],
-                "domains": [{"domain": src(0, 1)}],
-                "series": [
-                    {"series": src(1, 2), "targetAxis": "LEFT_AXIS",
-                     "colorStyle": {"rgbColor": BLUE}},
-                    {"series": src(2, 3), "targetAxis": "LEFT_AXIS",
-                     "colorStyle": {"rgbColor": AMBER}},
-                ],
-                "headerCount": 1,
-            },
-        },
-        "position": {"overlayPosition": {
-            # Anchor just right of the H-column transaction data, at the budget header row
-            "anchorCell": {"sheetId": sid, "rowIndex": 2, "columnIndex": 9},
-            "widthPixels":  480,
-            "heightPixels": 300,
-        }},
-    }}}
-
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SHEET_ID, body={"requests": [req]}).execute()
-
+    n = n_cats
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit"
-    print(f"Chart added to '{te.TAB_NAME}'")
-    print(f"Open: {url}")
+    print(f"Written {n} SPARKLINE progress bars to '{te.TAB_NAME}'!E{_DATA_ROW}:E{end_row}")
     print()
-    print("The chart appears to the RIGHT of the transaction columns (col J area),")
-    print("aligned with the budget summary rows. Blue = Budget, Amber = Spent.")
-    print("It live-updates as you add transactions (SUMPRODUCT formulas drive it).")
+    print("Column E now shows an in-cell progress bar per category:")
+    print("  Blue fill  = proportion of budget spent (under budget)")
+    print("  Red fill   = proportion of budget spent (over budget)")
+    print("  Light fill = remaining budget headroom")
+    print(f"Open: {url}")
 
 
 if __name__ == "__main__":
