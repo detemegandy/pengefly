@@ -162,13 +162,14 @@ def frz(sid, rows=0, cols=0):
                        "gridProperties": {"frozenRowCount": rows, "frozenColumnCount": cols}},
         "fields": "gridProperties(frozenRowCount,frozenColumnCount)"}}
 
-# Col layout: A=label | B=account | C=default | D-O=Jan-Dec | P=YTD
+# Col layout: A=label | B=account | C=default | D-O=Jan-Dec | P=YTD | (gap) | R=legend
 LABEL_COL   = 0
 ACCT_COL    = 1
 DEFAULT_COL = 2
 JAN_COL     = 3   # months at cols 3-14
 YTD_COL     = 15
 NCOLS       = 16
+LEGEND_COL  = 17  # one blank gap col at 16
 
 def mcol(m):
     """0-indexed month → column index."""
@@ -185,6 +186,36 @@ def to_a1(row, col):
     return f"'Yearly 2026'!{col_letter}{row+1}"
 
 
+def add_legend(sid, rq, dt):
+    """Color legend panel in column R (LEGEND_COL), starting at row 0."""
+    entries = [
+        # (label text,                                           bg,        fg,        bold)
+        ("COLOR LEGEND",                                         BLUE_DARK, WHITE,     True),
+        ("",                                                     WHITE,     None,      False),
+        ("— TRANSFERS —",                                        BLUE_LIGHT,None,      True),
+        ("Sent as planned  (closed, matches carry-forward)",     GREEN,     GREEN_DARK,False),
+        ("Current month — plan not yet confirmed",               AMBER,     None,      False),
+        ("Changed from previous month (change or revert)",       ORANGE,    None,      False),
+        ("Future month — carry-forward plan",                    GREY,      GREY_TEXT, False),
+        ("",                                                     WHITE,     None,      False),
+        ("— FLEX BUDGET —",                                      BLUE_LIGHT,None,      True),
+        ("Actual < 80 % of budget  (well under)",                GREEN,     GREEN_DARK,False),
+        ("Actual 80–100 % of budget  (on track, close)",         AMBER,     None,      False),
+        ("Actual > 100 % of budget  (over!)",                    RED_LIGHT, None,      False),
+        ("Budget changed this month  (carry-forward break)",     ORANGE,    None,      False),
+        ("Future month — carry-forward plan",                    GREY,      GREY_TEXT, False),
+        ("",                                                     WHITE,     None,      False),
+        ("— BUFFER —",                                           BLUE_LIGHT,None,      True),
+        ("Income covers all outgoing  (positive buffer)",        GREEN,     GREEN_DARK,False),
+        ("Spending exceeds income  (negative buffer)",           RED_LIGHT, None,      False),
+    ]
+    for i, (text, bg, fg, bold) in enumerate(entries):
+        f = fmt(bg=bg, bold=bold, fg=fg)
+        rq.append(rpt(sid, i, LEGEND_COL, 1, 1, f))
+        if text:
+            dt.append((i, LEGEND_COL, f"  {text}"))
+
+
 def build_yearly(sid):
     rq, dt = [], []
 
@@ -195,6 +226,7 @@ def build_yearly(sid):
     for c in range(JAN_COL, JAN_COL+12):
         rq.append(cw(sid, c, 68))
     rq.append(cw(sid, YTD_COL, 80))
+    rq.append(cw(sid, LEGEND_COL,  310))
 
     # ── Row 0: title ──────────────────────────────────────────────────────────
     rq.append(mrg(sid, 0, 0, 1, NCOLS))
@@ -411,6 +443,8 @@ def build_yearly(sid):
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=YELLOW, italic=True)))
     dt.append((row, LABEL_COL, "  ↳ Extra / discretionary"))
     row += 1
+
+    add_legend(sid, rq, dt)
 
     return rq, dt
 
