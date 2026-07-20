@@ -1,5 +1,5 @@
 [project]
-name = "pengeflyt"
+name = "pengefly"
 version = "0.1.0"
 description = "Personal finance Google Sheets generator and tracker"
 readme = "README.md"
