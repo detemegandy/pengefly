@@ -1,17 +1,11 @@
 """
 PROTOTYPE — Monthly Overview sheet.
 
-Layout:
-  Top: overall budget pie (all categories + surplus pool as slices)
-  Top-right: financial health indicator (adherence score + verdict)
-  Below: per-category columns (horizontal), each with:
-    - Category name, budget, spent
-    - SPARKLINE progress bar
-    - Donut chart (fills rotationally; fully blue when over budget)
-    - Live FILTER transaction list below the chart
-
-Health score = (categories within budget / total) × 100
-Verdict: On Track (≥86%), Caution (≥57%), Over Budget (<57%)
+Per-slice color trick: set spreadsheet theme ACCENT1=blue, ACCENT2=white.
+Both the overall pie and each donut put their data as [Spent, Remaining] /
+[Spending, Surplus] — the blue (ACCENT1) slice is the arc, the white
+(ACCENT2) slice vanishes into the background, giving the "missing piece"
+effect without any per-slice color API call.
 
 Run: uv run prototypes/monthly_overview.py
 THROWAWAY — do not merge to main.
@@ -28,24 +22,22 @@ SCOPES     = te.SCOPES
 SHEET_ID   = te.SHEET_ID
 
 TAB   = "Monthly Overview"
-TRANS = te.TAB_NAME       # "Card Transactions Jun 2026 — Detailed"
-T1    = te.DATA_ROW       # 14 (first transaction row, 1-indexed)
+TRANS = te.TAB_NAME
+T1    = te.DATA_ROW
 T2    = T1 + 499
 
-CATS         = te.CATEGORIES  # 7 category names
-BDGETS       = te.BUDGETS     # {cat: NOK amount}
+CATS         = te.CATEGORIES
+BDGETS       = te.BUDGETS
 N            = len(CATS)
-TOTAL_BUDGET = sum(BDGETS.values())  # 23 788
+TOTAL_BUDGET = sum(BDGETS.values())   # 23 788
 
-# Per-category donut: Google Sheets API v4 does not expose per-slice color for
-# pieChart specs — the "Remaining" arc will be Google's default 2nd-accent
-# color. Fix in the UI: right-click the grey/orange arc → Color → white.
+COLS_PER = 3
+CAT_COLS = [i * COLS_PER for i in range(N)]   # 0-indexed start col per cat
 
-COLS_PER = 3  # columns per category block: Date | Merchant | Amount
-CAT_COLS = [i * COLS_PER for i in range(N)]  # 0-indexed start col per cat
-
-# Data zone: labels in col W (0-idx=22), values in col X (0-idx=23)
+# Data zone: col W (0-idx 22) = labels, col X (0-idx 23) = values
 DZ_L, DZ_V = 22, 23
+
+WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
 
 
 def col_letter(c0):
@@ -56,15 +48,14 @@ def col_letter(c0):
     return s
 
 
-# Shared formula builders
-def spent_fx(cat):
-    return (f"=SUMPRODUCT(('{TRANS}'!E{T1}:E{T2}=\"{cat}\")"
+def spent_bare(cat):
+    """SUMPRODUCT expression without leading '='"""
+    return (f"SUMPRODUCT(('{TRANS}'!E{T1}:E{T2}=\"{cat}\")"
             f"*'{TRANS}'!D{T1}:D{T2})")
 
 
 def sparkline_fx(cat):
-    sfx = (f"SUMPRODUCT(('{TRANS}'!E{T1}:E{T2}=\"{cat}\")"
-           f"*'{TRANS}'!D{T1}:D{T2})")
+    sfx = spent_bare(cat)
     b = BDGETS[cat]
     return (
         f'=SPARKLINE(MIN({sfx}/{b},1),'
@@ -74,12 +65,10 @@ def sparkline_fx(cat):
     )
 
 
-def over_fx(cat, spent_cell):
-    b = BDGETS[cat]
+def over_fx(spent_cell, budget):
     return (
-        f'=IF({spent_cell}>{b},'
-        f'"Over: +NOK "&TEXT({spent_cell}-{b},"#,##0"),'
-        f'"")'
+        f'=IF({spent_cell}>{budget},'
+        f'"Over: +NOK "&TEXT({spent_cell}-{budget},"#,##0"),"")'
     )
 
 
@@ -91,15 +80,18 @@ def filter_fx(cat):
     )
 
 
-# ── Row layout (1-indexed for formula strings, 0-indexed for API rowIndex) ─
-PIE_HDR_1  = 1           # data zone: pie chart header
-PIE_DATA_1 = 2           # data zone rows 2-8: category spents
-PIE_SURP_1 = PIE_DATA_1 + N   # data zone row 9: surplus pool
-HLTH_1     = PIE_SURP_1 + 2   # data zone row 11: health score
-VERD_1     = HLTH_1 + 1       # data zone row 12: verdict
-DONUT_1    = VERD_1 + 2       # data zone row 14: donut data start (2 per cat)
+# ── Data zone row layout (1-indexed for formula strings) ─────────────────
+# Overall pie: 2 slices in order [Spending, Surplus]
+#   Slice 1 (Spending) → ACCENT1 = blue
+#   Slice 2 (Surplus)  → ACCENT2 = white (invisible = "missing piece")
+PIE_SPND_1 = 1   # "Spending" | =SUM(cat spents)
+PIE_SURP_1 = 2   # "Surplus"  | =MAX(0, TOTAL_BUDGET - spending)
+CAT_1      = 3   # rows 3–9: category labels + their SUMPRODUCT spents
+HLTH_1     = 11  # health score
+VERD_1     = 12  # verdict
+DONUT_1    = 14  # donut data start (2 rows per cat: [Spent, Remaining])
 
-# Category section 0-indexed (displayed below the overall pie)
+# Category section 0-indexed rows (API rowIndex)
 CAT_HDR   = 21   # row 22: category name
 CAT_BUD   = 22   # row 23: Budget label
 CAT_SPT   = 23   # row 24: Spent (formula)
@@ -107,20 +99,53 @@ CAT_BAR   = 24   # row 25: SPARKLINE progress bar
 DNT_ANC   = 25   # row 26: donut chart anchor
 DNT_H_PX  = 220
 DNT_W_PX  = 200
-OVER_ROW  = 37   # row 38: over-budget indicator (0-indexed)
+OVER_ROW  = 37   # row 38: over-budget indicator
 TRANS_HDR = 38   # row 39: transaction list header
 TRANS_DAT = 39   # row 40: FILTER formula
+
+
+def _set_theme(svc):
+    """Set ACCENT1=blue (spent arcs) and ACCENT2=white (remaining arcs).
+    ACCENT1 is already blue by default; only ACCENT2 changes from orange."""
+    def c(r, g, b):
+        return {"rgbColor": {"red": r/255, "green": g/255, "blue": b/255}}
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{
+            "updateSpreadsheetProperties": {
+                "properties": {
+                    "spreadsheetTheme": {
+                        "primaryFontFamily": "Roboto",
+                        "themeColors": [
+                            {"colorType": "TEXT",       "color": c(0,   0,   0)},
+                            {"colorType": "BACKGROUND", "color": c(255, 255, 255)},
+                            {"colorType": "ACCENT1",    "color": c(68,  114, 196)},  # #4472C4 blue
+                            {"colorType": "ACCENT2",    "color": c(255, 255, 255)},  # white — remaining/surplus
+                            {"colorType": "ACCENT3",    "color": c(255, 192, 0)},    # amber
+                            {"colorType": "ACCENT4",    "color": c(70,  163, 71)},   # green
+                            {"colorType": "ACCENT5",    "color": c(63,  147, 199)},  # teal
+                            {"colorType": "ACCENT6",    "color": c(146, 99,  183)},  # purple
+                            {"colorType": "LINK",       "color": c(17,  84,  181)},
+                        ]
+                    }
+                },
+                "fields": "spreadsheetTheme"
+            }
+        }]}
+    ).execute()
 
 
 def main():
     creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
     svc   = build("sheets", "v4", credentials=creds)
 
+    _set_theme(svc)
+    print("  Theme: ACCENT1=blue, ACCENT2=white")
+
     info = svc.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
     tabs = {s["properties"]["title"]: s["properties"]["sheetId"]
             for s in info["sheets"]}
 
-    # Delete and recreate the tab for idempotent reruns
     reqs = []
     if TAB in tabs:
         reqs.append({"deleteSheet": {"sheetId": tabs[TAB]}})
@@ -128,81 +153,78 @@ def main():
     resp = svc.spreadsheets().batchUpdate(
         spreadsheetId=SHEET_ID, body={"requests": reqs}).execute()
     sid = resp["replies"][-1]["addSheet"]["properties"]["sheetId"]
-    print(f"Created '{TAB}' (sid={sid})")
+    print(f"  Created '{TAB}' (sid={sid})")
 
     L = col_letter(DZ_L)   # "W"
     V = col_letter(DZ_V)   # "X"
 
-    dt = []  # value ranges for batchUpdate
+    dt = []
 
-    # ── Data zone: overall pie chart (W1:X8) — spending categories only ──
-    # Surplus is intentionally excluded: the pie shows only what was spent,
-    # no "empty" surplus slice needed.
-    pie_rows = [["Category", "Spent"]]
-    for cat in CATS:
-        pie_rows.append([cat, spent_fx(cat)])
-    dt.append({"range": f"'{TAB}'!{L}{PIE_HDR_1}:{V}{PIE_HDR_1+N}",
-               "values": pie_rows})
+    # ── Data zone: overall pie (W1:X2) ────────────────────────────────────
+    total_spent_fx = f"=SUM({V}{CAT_1}:{V}{CAT_1+N-1})"    # =SUM(X3:X9)
+    surplus_fx     = f"=MAX(0,{TOTAL_BUDGET}-{V}{PIE_SPND_1})"  # =MAX(0,23788-X1)
+    dt.append({"range": f"'{TAB}'!{L}{PIE_SPND_1}:{V}{PIE_SURP_1}",
+               "values": [["Spending", total_spent_fx],
+                          ["Surplus",  surplus_fx]]})
 
-    # ── Data zone: health indicator (W10:X11, shifted since no surplus row) ─
-    # References already-written spent values in X2:X8
-    conditions = "+".join(
-        f"IF({V}{PIE_DATA_1+i}<={BDGETS[CATS[i]]},1,0)" for i in range(N)
-    )
-    health_fx = f"=({conditions})/{N}*100"
-    verdict_fx = (
-        f'=IF({V}{HLTH_1}>=86,"On Track",'
-        f'IF({V}{HLTH_1}>=57,"Caution","Over Budget"))'
+    # ── Data zone: category spents (W3:X9) ────────────────────────────────
+    dt.append({"range": f"'{TAB}'!{L}{CAT_1}:{V}{CAT_1+N-1}",
+               "values": [[cat, f"={spent_bare(cat)}"] for cat in CATS]})
+
+    # ── Data zone: health indicator (W11:X12) ─────────────────────────────
+    adherence = "+".join(
+        f"IF({V}{CAT_1+i}<={BDGETS[CATS[i]]},1,0)" for i in range(N)
     )
     dt.append({"range": f"'{TAB}'!{L}{HLTH_1}:{V}{VERD_1}",
-               "values": [["Health Score", health_fx],
-                          ["Verdict",      verdict_fx]]})
+               "values": [
+                   ["Health Score", f"=({adherence})/{N}*100"],
+                   ["Verdict",
+                    f'=IF({V}{HLTH_1}>=86,"On Track",'
+                    f'IF({V}{HLTH_1}>=57,"Caution","Over Budget"))'],
+               ]})
 
-    # ── Data zone: per-category donut data (W14:X28, 2 rows per cat) ─────
+    # ── Data zone: per-category donut data (W14:X28) ──────────────────────
+    # [Spent, Remaining] → Spent gets ACCENT1=blue, Remaining gets ACCENT2=white
     donut_rows = []
-    for cat in CATS:
-        sfx_bare = (f"SUMPRODUCT(('{TRANS}'!E{T1}:E{T2}=\"{cat}\")"
-                    f"*'{TRANS}'!D{T1}:D{T2})")
-        donut_rows.append(["Spent",     f"={sfx_bare}"])
-        donut_rows.append(["Remaining", f"=MAX(0,{BDGETS[cat]}-{sfx_bare})"])
+    for i, cat in enumerate(CATS):
+        ref = f"{V}{CAT_1+i}"   # already-computed SUMPRODUCT in X3:X9
+        donut_rows.append(["Spent",     f"={ref}"])
+        donut_rows.append(["Remaining", f"=MAX(0,{BDGETS[cat]}-{ref})"])
     dt.append({"range": f"'{TAB}'!{L}{DONUT_1}:{V}{DONUT_1+N*2-1}",
                "values": donut_rows})
 
-    # ── Category section rows ─────────────────────────────────────────────
-    hdr_row  = []
-    bud_row  = []
-    spt_row  = []  # store formula per cat for cross-referencing over_fx
-    bar_row  = []
-    over_row = []
-    th_row   = []
-
-    # Spent cell references in data zone (X2, X3, ... X8)
-    spent_cells = [f"{V}{PIE_DATA_1+i}" for i in range(N)]
+    # ── Visible category section rows ─────────────────────────────────────
+    hdr_row = []
+    bud_row = []
+    spt_row = []
+    bar_row = []
+    ovr_row = []
+    thr_row = []
 
     for i, cat in enumerate(CATS):
-        hdr_row.extend([cat,                            "", ""])
-        bud_row.extend([f"Budget: NOK {BDGETS[cat]:,}", "", ""])
-        spt_row.extend([f"={spent_cells[i]}",           "", ""])
-        bar_row.extend([sparkline_fx(cat),              "", ""])
-        over_row.extend([over_fx(cat, spent_cells[i]),  "", ""])
-        th_row.extend(["Date", "Merchant", "Amount"])
+        sc = f"{V}{CAT_1+i}"   # spent cell reference (X3, X4, …)
+        hdr_row.extend([cat,                              "", ""])
+        bud_row.extend([f"Budget: NOK {BDGETS[cat]:,}",  "", ""])
+        spt_row.extend([f"={sc}",                         "", ""])
+        bar_row.extend([sparkline_fx(cat),                "", ""])
+        ovr_row.extend([over_fx(sc, BDGETS[cat]),         "", ""])
+        thr_row.extend(["Date", "Merchant", "Amount"])
 
-    last_col = col_letter(N * COLS_PER - 1)  # "U"
-    for row_vals, row_1idx in [
-        (hdr_row,  CAT_HDR  + 1),
-        (bud_row,  CAT_BUD  + 1),
-        (spt_row,  CAT_SPT  + 1),
-        (bar_row,  CAT_BAR  + 1),
-        (over_row, OVER_ROW + 1),
-        (th_row,   TRANS_HDR + 1),
+    last_col = col_letter(N * COLS_PER - 1)   # "U"
+    for vals, row_1idx in [
+        (hdr_row, CAT_HDR  + 1),
+        (bud_row, CAT_BUD  + 1),
+        (spt_row, CAT_SPT  + 1),
+        (bar_row, CAT_BAR  + 1),
+        (ovr_row, OVER_ROW + 1),
+        (thr_row, TRANS_HDR + 1),
     ]:
         dt.append({"range": f"'{TAB}'!A{row_1idx}:{last_col}{row_1idx}",
-                   "values": [row_vals]})
+                   "values": [vals]})
 
-    # FILTER formulas go per-category (each at its own start column)
+    # FILTER formulas — one per category at its starting column
     for i, cat in enumerate(CATS):
-        cl = col_letter(CAT_COLS[i])
-        dt.append({"range": f"'{TAB}'!{cl}{TRANS_DAT+1}",
+        dt.append({"range": f"'{TAB}'!{col_letter(CAT_COLS[i])}{TRANS_DAT+1}",
                    "values": [[filter_fx(cat)]]})
 
     svc.spreadsheets().values().batchUpdate(
@@ -211,7 +233,7 @@ def main():
     ).execute()
     print("  Data written")
 
-    # ── Charts ───────────────────────────────────────────────────────────
+    # ── Charts ────────────────────────────────────────────────────────────
     def pie_src(r0_start, r0_end_excl, col0):
         return {"sourceRange": {"sources": [{
             "sheetId":          sid,
@@ -223,20 +245,17 @@ def main():
 
     chart_reqs = []
 
-    # Overall pie — centered over the 21-column category block.
-    # 21 cols × 100px default = 2100px. Chart width 700px →
-    # left edge at (2100-700)/2 = 700px = column H (0-idx=7), offsetX=0.
-    # Shows spending categories only; no surplus slice.
-    # Data rows: PIE_DATA_1-1 (0-idx) to PIE_DATA_1-1+N (exclusive) = rows 1..8
+    # Overall pie — centered over 21-col block (col H=idx7, 700px wide, 300px tall)
+    # 2 slices: Spending (ACCENT1=blue) + Surplus (ACCENT2=white = "missing piece")
     chart_reqs.append({"addChart": {"chart": {
         "spec": {
-            "title": "Spending Breakdown — Jun 2026",
-            "backgroundColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
+            "title": "",
+            "backgroundColorStyle": {"rgbColor": WHITE},
             "pieChart": {
-                "legendPosition": "LABELED_LEGEND",
+                "legendPosition": "NO_LEGEND",
                 "threeDimensional": False,
-                "domain": pie_src(PIE_DATA_1 - 1, PIE_DATA_1 - 1 + N, DZ_L),
-                "series": pie_src(PIE_DATA_1 - 1, PIE_DATA_1 - 1 + N, DZ_V),
+                "domain": pie_src(0, 2, DZ_L),   # W1:W2
+                "series": pie_src(0, 2, DZ_V),   # X1:X2
             },
         },
         "position": {"overlayPosition": {
@@ -245,16 +264,14 @@ def main():
         }},
     }}})
 
-    # Per-category donut charts.
-    # NOTE: Google Sheets API v4 does not expose per-slice colors for pieChart.
-    # The "Remaining" arc gets the default 2nd-accent color.
-    # To make it white/invisible: right-click the arc in the Sheets UI → Color → white.
-    for i, cat in enumerate(CATS):
-        r0 = DONUT_1 - 1 + i * 2  # 0-indexed start row
+    # Per-category donuts
+    # 2 slices each: Spent (ACCENT1=blue) + Remaining (ACCENT2=white = invisible arc)
+    for i in range(N):
+        r0 = DONUT_1 - 1 + i * 2   # 0-indexed start of this cat's donut data
         chart_reqs.append({"addChart": {"chart": {
             "spec": {
-                "title": "",   # title shown in cells above, not on chart
-                "backgroundColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
+                "title": "",
+                "backgroundColorStyle": {"rgbColor": WHITE},
                 "pieChart": {
                     "legendPosition": "NO_LEGEND",
                     "pieHole": 0.5,
