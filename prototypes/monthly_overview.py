@@ -37,6 +37,10 @@ BDGETS       = te.BUDGETS     # {cat: NOK amount}
 N            = len(CATS)
 TOTAL_BUDGET = sum(BDGETS.values())  # 23 788
 
+# Per-category donut: Google Sheets API v4 does not expose per-slice color for
+# pieChart specs — the "Remaining" arc will be Google's default 2nd-accent
+# color. Fix in the UI: right-click the grey/orange arc → Color → white.
+
 COLS_PER = 3  # columns per category block: Date | Merchant | Amount
 CAT_COLS = [i * COLS_PER for i in range(N)]  # 0-indexed start col per cat
 
@@ -131,16 +135,16 @@ def main():
 
     dt = []  # value ranges for batchUpdate
 
-    # ── Data zone: overall pie chart (W1:X9) ─────────────────────────────
+    # ── Data zone: overall pie chart (W1:X8) — spending categories only ──
+    # Surplus is intentionally excluded: the pie shows only what was spent,
+    # no "empty" surplus slice needed.
     pie_rows = [["Category", "Spent"]]
     for cat in CATS:
         pie_rows.append([cat, spent_fx(cat)])
-    spent_sum = f"SUM({V}{PIE_DATA_1}:{V}{PIE_DATA_1+N-1})"
-    pie_rows.append(["Surplus", f"=MAX(0,{TOTAL_BUDGET}-{spent_sum})"])
-    dt.append({"range": f"'{TAB}'!{L}{PIE_HDR_1}:{V}{PIE_SURP_1}",
+    dt.append({"range": f"'{TAB}'!{L}{PIE_HDR_1}:{V}{PIE_HDR_1+N}",
                "values": pie_rows})
 
-    # ── Data zone: health indicator (W11:X12) ────────────────────────────
+    # ── Data zone: health indicator (W10:X11, shifted since no surplus row) ─
     # References already-written spent values in X2:X8
     conditions = "+".join(
         f"IF({V}{PIE_DATA_1+i}<={BDGETS[CATS[i]]},1,0)" for i in range(N)
@@ -219,33 +223,41 @@ def main():
 
     chart_reqs = []
 
-    # Overall pie chart — anchored A1, 520×300px
-    # Data: X2:X9 (values), W2:W9 (labels), 0-indexed rows 1-8
+    # Overall pie — centered over the 21-column category block.
+    # 21 cols × 100px default = 2100px. Chart width 700px →
+    # left edge at (2100-700)/2 = 700px = column H (0-idx=7), offsetX=0.
+    # Shows spending categories only; no surplus slice.
+    # Data rows: PIE_DATA_1-1 (0-idx) to PIE_DATA_1-1+N (exclusive) = rows 1..8
     chart_reqs.append({"addChart": {"chart": {
         "spec": {
-            "title": "Budget Breakdown — Jun 2026",
+            "title": "Spending Breakdown — Jun 2026",
+            "backgroundColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
             "pieChart": {
                 "legendPosition": "LABELED_LEGEND",
                 "threeDimensional": False,
-                "domain": pie_src(PIE_DATA_1 - 1, PIE_SURP_1, DZ_L),
-                "series": pie_src(PIE_DATA_1 - 1, PIE_SURP_1, DZ_V),
+                "domain": pie_src(PIE_DATA_1 - 1, PIE_DATA_1 - 1 + N, DZ_L),
+                "series": pie_src(PIE_DATA_1 - 1, PIE_DATA_1 - 1 + N, DZ_V),
             },
         },
         "position": {"overlayPosition": {
-            "anchorCell": {"sheetId": sid, "rowIndex": 0, "columnIndex": 0},
-            "widthPixels": 520, "heightPixels": 300,
+            "anchorCell": {"sheetId": sid, "rowIndex": 0, "columnIndex": 7},
+            "widthPixels": 700, "heightPixels": 300,
         }},
     }}})
 
-    # Per-category donut charts
+    # Per-category donut charts.
+    # NOTE: Google Sheets API v4 does not expose per-slice colors for pieChart.
+    # The "Remaining" arc gets the default 2nd-accent color.
+    # To make it white/invisible: right-click the arc in the Sheets UI → Color → white.
     for i, cat in enumerate(CATS):
         r0 = DONUT_1 - 1 + i * 2  # 0-indexed start row
         chart_reqs.append({"addChart": {"chart": {
             "spec": {
-                "title": cat,
+                "title": "",   # title shown in cells above, not on chart
+                "backgroundColorStyle": {"rgbColor": {"red": 1, "green": 1, "blue": 1}},
                 "pieChart": {
                     "legendPosition": "NO_LEGEND",
-                    "pieHole": 0.45,
+                    "pieHole": 0.5,
                     "threeDimensional": False,
                     "domain": pie_src(r0, r0 + 2, DZ_L),
                     "series": pie_src(r0, r0 + 2, DZ_V),
