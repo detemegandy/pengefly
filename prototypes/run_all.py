@@ -4,8 +4,13 @@ Run all four prototype tabs into the same workbook so you can browse them togeth
 Tab order after run:
   1. Yearly 2026          — annual budget overview; status dropdowns (✓ Closed / Open / —)
   2. Config               — accounts, categories, card import mapping
-  3. Card Transactions … — Jun 2026 transaction detail + CC min payment rows
-  4. Credit Card Tracker  — EIKA and Mona payment schedules + over-limit simulation
+  3. Credit Card Tracker  — EIKA and Mona payment schedules + over-limit simulation
+  4. Card Transactions … — Jun 2026 transaction detail + CC min payment rows
+
+Run order is significant:
+  - Yearly 2026 must run first: CC Tracker reads its D3:O3 status row via XLOOKUP
+  - Credit Card Tracker must run before Card Transactions: min-payment rows in Card
+    Transactions reference 'Credit Card Tracker'!B5/H5 etc. — tab must exist first
 
 Each prototype manages its own tab and preserves the others, so they can also be
 run independently when iterating on a single sheet.
@@ -20,10 +25,10 @@ import os
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1gE5wc6lXaAOsiQ_dpjg7uGBnUrtGr0-oy-56UKyTdQc/edit"
 SCRIPTS   = [
-    "prototypes/yearly_overview.py",       # must run first — CC tracker reads its status row
+    "prototypes/yearly_overview.py",       # first: CC tracker reads its status row
     "prototypes/config_sheet.py",
+    "prototypes/credit_card_tracker.py",   # second: transaction tab reads its B5/H5 etc.
     "prototypes/transaction_entry.py",
-    "prototypes/credit_card_tracker.py",
 ]
 
 def main():
