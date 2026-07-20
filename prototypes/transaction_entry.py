@@ -2,7 +2,7 @@
 PROTOTYPE — transaction entry sheet layout v6
 
 Architecture:
-  A: All Cards = single editable master sheet (all transactions from all cards)
+  Card Transactions [Month] — Detailed = single editable master sheet (all transactions from all cards)
   Filter views = one per card, created via API — same data, focused per-card view
 
 Import flow (what the CLI will do):
@@ -56,7 +56,7 @@ DATA_ROW = 14   # 1-indexed first transaction row
 ROWS     = 150  # max transactions rows to reserve for formatting
 
 # All sample data in one flat list — this is what the CLI would produce after importing
-# all three card exports and appending them to A: All Cards.
+# all three card exports and appending them to Card Transactions [Month] — Detailed.
 SAMPLES = [
     # card              date    merchant              amount  category       month         settlement            notes
     ("Shared Card",   "01.06", "Extra supermarked",   359,  "Groceries",   "This month", "",                  ""),
@@ -170,7 +170,7 @@ def wrap(sid, r1, r2, col):
         "fields": "userEnteredFormat.wrapStrategy"}}
 
 
-# ── build A: All Cards ─────────────────────────────────────────────────────────
+# ── build Card Transactions [Month] — Detailed ─────────────────────────────────────────────────────────
 
 def build_all_cards(sid):
     rq, dt = [], []
@@ -184,7 +184,7 @@ def build_all_cards(sid):
     # Row 0: title
     rq.append(mrg(sid, 0, 0, 1, NCOLS))
     rq.append(rpt(sid, 0, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE, size=13, halign="CENTER")))
-    dt.append({"range": "A1", "values": [["June 2026 — All Cards"]]})
+    dt.append({"range": "A1", "values": [["Card Transactions Jun 2026 — Detailed"]]})
 
     # Row 1: instruction
     rq.append(mrg(sid, 1, 0, 2, NCOLS))
@@ -310,7 +310,7 @@ def main():
 
     print(f"Building: https://docs.google.com/spreadsheets/d/{sid}/edit")
 
-    # Clear — add a temp sheet, delete everything else, add fresh "All Cards".
+    # Clear — add a temp sheet, delete everything else, add fresh "Card Transactions Jun 2026 — Detailed".
     # This ensures no leftover slicers or filter views from previous runs.
     service.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [
         {"addSheet": {"properties": {"title": "_tmp"}}}]}).execute()
@@ -323,7 +323,7 @@ def main():
         service.spreadsheets().batchUpdate(
             spreadsheetId=sid, body={"requests": to_del}).execute()
     result = service.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [
-        {"addSheet": {"properties": {"title": "All Cards", "index": 0}}}]}).execute()
+        {"addSheet": {"properties": {"title": "Card Transactions Jun 2026 — Detailed", "index": 0}}}]}).execute()
     keep = result["replies"][0]["addSheet"]["properties"]["sheetId"]
     service.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [
         {"deleteSheet": {"sheetId": tmp_id}}]}).execute()
@@ -388,7 +388,7 @@ def main():
     service.spreadsheets().batchUpdate(
         spreadsheetId=sid, body={"requests": post}).execute()
 
-    print("\nDone — single sheet 'All Cards':")
+    print("\nDone — single sheet 'Card Transactions [Month] — Detailed':")
     print("  - Budget summary rows 1-12")
     print("  - All transactions rows 14+ (all cards mixed, sorted by date)")
     print("  - Filter views: Data → Change view → [Shared Card / Shared Credit / Personal]")
