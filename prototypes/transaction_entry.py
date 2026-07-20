@@ -365,25 +365,7 @@ def main():
             "cell": {"userEnteredFormat": pct}, "fields": "userEnteredFormat.numberFormat"}},
     ]
 
-    # Slicers anchored right of col H
-    for col_i, title, arow, acol, w, h in [
-        (CAT_COL,    "Category",   1,  8, 155, 195),
-        (CARD_COL,   "Card",       7,  8, 155, 130),
-        (SETTLE_COL, "Settlement", 1, 10, 200, 255),
-    ]:
-        post.append({"addSlicer": {"slicer": {
-            "spec": {
-                "dataRange": {"sheetId": keep,
-                              "startRowIndex": DATA_ROW-1, "endRowIndex": DATA_ROW+ROWS,
-                              "startColumnIndex": 0, "endColumnIndex": NCOLS},
-                "columnIndex": col_i,
-                "title": title,
-            },
-            "position": {"overlayPosition": {
-                "anchorCell": {"sheetId": keep, "rowIndex": arow, "columnIndex": acol},
-                "widthPixels": w, "heightPixels": h,
-            }},
-        }}})
+    # No slicers — filter views handle per-card filtering; column header filter covers the rest.
 
     service.spreadsheets().batchUpdate(
         spreadsheetId=sid, body={"requests": post}).execute()
