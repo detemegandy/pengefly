@@ -18,6 +18,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import credit_card_tracker as cct
 import transaction_entry as te
+import yearly_overview as yo
 
 CREDS_FILE = cct.CREDS_FILE
 SCOPES     = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -56,6 +57,326 @@ def gcell(grid, row, col, default=""):
         return grid[row][col]
     except IndexError:
         return default
+
+
+def _is_numeric(s):
+    try:
+        float(s or "0")
+        return True
+    except ValueError:
+        return False
+
+
+# ── Integration testing helpers (Phase 5) ────────────────────────────────────
+
+def _count_trans_rows(service):
+    resp = get_values(service, TRANS, f"A{te.DATA_ROW}:A{te.DATA_ROW+500}")
+    return sum(1 for r in resp if r and r[0].strip())
+
+
+def _get_existing_keys(service):
+    resp = get_values(service, TRANS, f"B{te.DATA_ROW}:D{te.DATA_ROW+500}")
+    keys = set()
+    for row in resp:
+        if len(row) >= 3:
+            amt = str(row[2]).replace(",", "").replace(" ", "")
+            keys.add((row[0], row[1], amt))
+    return keys
+
+
+def _import_rows(svc_w, service, rows):
+    """Simulate CLI bank import with deduplication.
+    rows: list of (date, merchant, amount, category, card).
+    Returns (added_count, skipped_count).
+    """
+    existing_keys = _get_existing_keys(service)
+    rows_before = _count_trans_rows(service)
+    to_write = []
+    skipped = 0
+    for date, merchant, amount, category, card in rows:
+        key = (date, merchant, str(amount))
+        if key in existing_keys:
+            skipped += 1
+            continue
+        to_write.append([card, date, merchant, amount, category, "This month", "", ""])
+        existing_keys.add(key)
+    if to_write:
+        next_row = te.DATA_ROW + rows_before
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{TRANS}'!A{next_row}:H{next_row + len(to_write) - 1}",
+            valueInputOption="USER_ENTERED",
+            body={"values": to_write},
+        ).execute()
+    return len(to_write), skipped
+
+
+def _clear_trans_rows(svc_w, start_1idx, count):
+    if count <= 0:
+        return
+    blank = [[""] * 8 for _ in range(count)]
+    svc_w.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range=f"'{TRANS}'!A{start_1idx}:H{start_1idx + count - 1}",
+        valueInputOption="USER_ENTERED",
+        body={"values": blank},
+    ).execute()
+
+
+def _apply_cross_refs(svc_w):
+    """Re-apply cross-sheet formulas after a tab rebuild (same as run_all.py patch step)."""
+    regular_count = len([r for r in te.SAMPLES if "CC min" not in r[2]])
+    eika_row = te.DATA_ROW + regular_count
+    mona_row = te.DATA_ROW + regular_count + 1
+    cross = [
+        {"range": f"'{cct.TAB_NAME}'!B4", "values": [[cct.CLOSED_THROUGH_FX]]},
+        {"range": f"'{cct.TAB_NAME}'!H4", "values": [[cct.CLOSED_THROUGH_FX]]},
+        {"range": f"'{te.TAB_NAME}'!D{eika_row}", "values": [[te._EIKA_MIN]]},
+        {"range": f"'{te.TAB_NAME}'!D{mona_row}", "values": [[te._MONA_MIN]]},
+    ]
+    svc_w.spreadsheets().values().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"valueInputOption": "USER_ENTERED", "data": cross},
+    ).execute()
+
+
+# Mock bank export data — merchant names use TEST-IMPORT suffix to avoid collision
+# with existing SAMPLES rows (which don't have this suffix).
+_BANK_FIRST = [
+    # (date, merchant, amount, category, card)
+    ("11.06", "KIWI TEST-IMPORT",     312, "Groceries", "Shared Card"),
+    ("12.06", "APOTEK TEST-IMPORT",   187, "Other",      "Shared Card"),
+    ("13.06", "REMA TEST-IMPORT",     956, "Groceries",  "Shared Card"),
+    ("14.06", "H&M TEST-IMPORT",     1200, "Shopping",   "Shared Card"),
+    ("15.06", "SPOTIFY TEST-IMPORT",  139, "Media",      "Personal"),
+]
+_BANK_SECOND = [
+    ("16.06", "BUNNPRIS TEST-IMPORT", 445, "Groceries",  "Shared Card"),
+    ("17.06", "ESSO TEST-IMPORT",     820, "Other",       "Shared Card"),
+    ("18.06", "SPORT TEST-IMPORT",    799, "Shopping",    "Shared Card"),
+    ("19.06", "LEKELAND TEST-IMPORT", 350, "Liana",       "Shared Card"),
+    ("20.06", "VET TEST-IMPORT",      299, "Pets",        "Shared Credit"),
+]
+_BANK_ALL = _BANK_FIRST + _BANK_SECOND
+# Groceries rows in _BANK_FIRST that the SUMPRODUCT picks up (non-Personal card):
+_GROC_DELTA_FIRST  = 312 + 956         # KIWI + REMA
+_GROC_DELTA_SECOND = 445               # BUNNPRIS
+_GROC_DELTA_ALL    = _GROC_DELTA_FIRST + _GROC_DELTA_SECOND
+
+
+def phase5_integration(service, svc_w):
+    print(f"\n── Phase 5: Integration testing — bank import, new category, new account ──")
+
+    rows_baseline = _count_trans_rows(service)
+    groc_before_raw = get_values(service, TRANS, "C4")
+    groc_before = float(gcell(groc_before_raw, 0, 0, "0").replace(",", "") or "0")
+
+    # 5a: Partial import (first 5 rows from a bank export)
+    added1, skip1 = _import_rows(svc_w, service, _BANK_FIRST)
+    rows_after1 = _count_trans_rows(service)
+    check("5a: Partial import — 5 rows added", added1 == 5, f"added={added1}")
+    check("5a: Row count grew by 5",
+          rows_after1 == rows_baseline + 5,
+          f"before={rows_baseline} after={rows_after1}")
+    groc_after1_raw = get_values(service, TRANS, "C4")
+    groc_after1 = float(gcell(groc_after1_raw, 0, 0, "0").replace(",", "") or "0")
+    check("5a: Groceries Spent increased by imported Groceries rows (non-Personal)",
+          abs(groc_after1 - groc_before - _GROC_DELTA_FIRST) < 1,
+          f"before={groc_before:.0f} after={groc_after1:.0f} "
+          f"expected_delta={_GROC_DELTA_FIRST}")
+
+    # 5b: Full import — all 10 rows; 5 already exist so only 5 new should be added
+    added2, skip2 = _import_rows(svc_w, service, _BANK_ALL)
+    rows_after2 = _count_trans_rows(service)
+    check("5b: Second import added 5 new rows",     added2 == 5, f"added={added2}")
+    check("5b: Deduplication skipped 5 existing rows", skip2 == 5, f"skipped={skip2}")
+    check("5b: Total row count = baseline + 10",
+          rows_after2 == rows_baseline + 10,
+          f"baseline={rows_baseline} after={rows_after2}")
+    groc_after2_raw = get_values(service, TRANS, "C4")
+    groc_after2 = float(gcell(groc_after2_raw, 0, 0, "0").replace(",", "") or "0")
+    check("5b: Groceries Spent includes all imported Groceries rows",
+          abs(groc_after2 - groc_before - _GROC_DELTA_ALL) < 1,
+          f"before={groc_before:.0f} after={groc_after2:.0f} "
+          f"expected_delta={_GROC_DELTA_ALL}")
+
+    # 5c: Row with no category — imported without crash; not counted in any category row
+    unk = [("21.06", "REISEBYRÅ TEST-IMPORT", 4500, "", "Shared Card")]
+    added_unk, _ = _import_rows(svc_w, service, unk)
+    rows_after_unk = _count_trans_rows(service)
+    check("5c: Row with blank category imported", added_unk == 1, f"added={added_unk}")
+    check("5c: Row count = baseline + 11", rows_after_unk == rows_baseline + 11,
+          f"after={rows_after_unk}")
+    # Budget total row should remain readable (no formula error)
+    tot_raw = get_values(service, TRANS, f"C{3 + len(te.CATEGORIES) + 1}")
+    check("5c: Budget total Spent row readable after blank-category import",
+          gcell(tot_raw, 0, 0, "") != "", f"total_spent={gcell(tot_raw, 0, 0)}")
+
+    # Clean up all 11 test rows
+    _clear_trans_rows(svc_w, rows_baseline + te.DATA_ROW, 11)
+    rows_cleaned = _count_trans_rows(service)
+    check("5c: Cleanup — sheet row count restored to baseline",
+          rows_cleaned == rows_baseline, f"after_cleanup={rows_cleaned} expected={rows_baseline}")
+
+    # 5d: New category — CLI rebuild with "Travel" added to CATEGORIES
+    print(f"    [Running CLI: rebuild '{TRANS}' with Travel category (~10 s)...]")
+    te.CATEGORIES.append("Travel")
+    te.BUDGETS["Travel"] = 2000
+    try:
+        te.main()
+        cat_raw = get_values(service, TRANS, f"A4:A{3 + len(te.CATEGORIES)}")
+        cat_labels = [gcell(cat_raw, i, 0) for i in range(len(te.CATEGORIES))]
+        check("5d: 'Travel' row appears in budget summary after CLI rebuild",
+              "Travel" in cat_labels, str(cat_labels))
+        # Total budget row should sum all categories including Travel
+        tot_row = 3 + len(te.CATEGORIES) + 1
+        tot_raw2 = get_values(service, TRANS, f"B{tot_row}")
+        tot_str = gcell(tot_raw2, 0, 0, "0").replace(",", "")
+        total_budget = float(tot_str) if _is_numeric(tot_str) else 0.0
+        # Original budget sum + 2000 (Travel) = te.BUDGETS values (Travel now included)
+        expected_min = sum(te.BUDGETS.values())
+        check("5d: Total budget includes Travel (≥ original total + 2000)",
+              total_budget >= expected_min,
+              f"total={total_budget:.0f} expected≥{expected_min:.0f}")
+    finally:
+        te.CATEGORIES.pop()
+        del te.BUDGETS["Travel"]
+        print(f"    [Restoring '{TRANS}' to original 7 categories...]")
+        te.main()
+        _apply_cross_refs(svc_w)
+    cat_raw2 = get_values(service, TRANS, f"A4:A{3 + len(te.CATEGORIES)}")
+    cat_labels2 = [gcell(cat_raw2, i, 0) for i in range(len(te.CATEGORIES))]
+    check("5d: 'Travel' row absent after restore", "Travel" not in cat_labels2,
+          str(cat_labels2))
+
+    # 5e: New account — CLI rebuild of Yearly 2026 with "Test Emergency" in TRANSFERS
+    print(f"    [Running CLI: rebuild '{YEARLY}' with extra transfer account (~10 s)...]")
+    # SENT has one entry per TRANSFERS item — must grow in sync
+    yo.TRANSFERS.append(("Test Emergency", 999, "—"))
+    yo.SENT.append([999] * 12)
+    try:
+        yo.main()
+        labels_raw = get_values(service, YEARLY, "A5:A80")
+        labels = [r[0] if r else "" for r in labels_raw]
+        found = any("Test Emergency" in lbl for lbl in labels)
+        check("5e: 'Test Emergency' account row appears in Yearly 2026", found,
+              f"found={found}")
+
+        def _find_label(needle):
+            for i, lbl in enumerate(labels):
+                if needle in lbl:
+                    return i + 5
+            return None
+
+        tx_sr = _find_label("Total transfers")
+        if tx_sr:
+            fml_raw = get_formulas(service, YEARLY, f"D{tx_sr}")
+            fml = gcell(fml_raw, 0, 0)
+            check("5e: Total transfers formula still valid after account added",
+                  fml.startswith("=SUM("), fml)
+    finally:
+        yo.TRANSFERS.pop()
+        yo.SENT.pop()
+        print(f"    [Restoring '{YEARLY}' to original 11 transfer accounts...]")
+        yo.main()
+        # yo.main() deleted and recreated Yearly 2026, breaking all cross-sheet
+        # references from CC Tracker. Re-apply them so Phase 6 reads the live formula.
+        _apply_cross_refs(svc_w)
+    labels_raw2 = get_values(service, YEARLY, "A5:A80")
+    labels2 = [r[0] if r else "" for r in labels_raw2]
+    check("5e: 'Test Emergency' row absent after restore",
+          not any("Test Emergency" in lbl for lbl in labels2), "")
+
+
+# ── Phase 6 ───────────────────────────────────────────────────────────────────
+
+def phase6_month_year_close(service, svc_w, buffer_sr):
+    print(f"\n── Phase 6: End-to-end — close a month / close a year ──")
+
+    STATUS_RANGE  = "D3:O3"
+    STATUS_CLOSED = "✓ Closed"
+
+    # Save original status row (D3:O3 = Jan–Dec, 12 cells)
+    orig_raw = get_values(service, YEARLY, STATUS_RANGE)
+    orig_status = list(orig_raw[0]) if orig_raw else []
+    while len(orig_status) < 12:
+        orig_status.append("")
+
+    try:
+        # Reset status row to "—" (all months open) so tests start from a clean state.
+        # build_yearly() writes MONTH_STATE which already marks Jan-Jun closed.
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{YEARLY}'!{STATUS_RANGE}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [["—"] * 12]},
+        ).execute()
+
+        # 6a: Close January only — CC Tracker should resolve to "Jan 2026"
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{YEARLY}'!D3",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[STATUS_CLOSED]]},
+        ).execute()
+        b4_jan = gcell(get_values(service, CCT, "B4"), 0, 0)
+        h4_jan = gcell(get_values(service, CCT, "H4"), 0, 0)
+        check("6a: CC Tracker B4 shows 'Jan 2026' after closing January",
+              b4_jan == "Jan 2026", f"B4={b4_jan!r}")
+        check("6a: CC Tracker H4 (Mona card) also shows 'Jan 2026'",
+              h4_jan == "Jan 2026", f"H4={h4_jan!r}")
+
+        # 6b: Also close June (I3 — D=Jan, E=Feb, F=Mar, G=Apr, H=May, I=Jun)
+        # XLOOKUP with mode -1 returns the LAST match, so June should win.
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{YEARLY}'!I3",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[STATUS_CLOSED]]},
+        ).execute()
+        b4_jun = gcell(get_values(service, CCT, "B4"), 0, 0)
+        check("6b: CC Tracker B4 shows 'Jun 2026' after closing Jan + Jun",
+              b4_jun == "Jun 2026", f"B4={b4_jun!r}")
+
+        # 6c: Close the full year (all 12 months) — CC Tracker should show December
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{YEARLY}'!{STATUS_RANGE}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[STATUS_CLOSED] * 12]},
+        ).execute()
+        b4_dec = gcell(get_values(service, CCT, "B4"), 0, 0)
+        check("6c: CC Tracker B4 shows 'Dec 2026' after closing all 12 months",
+              b4_dec == "Dec 2026", f"B4={b4_dec!r}")
+
+        # All 12 monthly buffer cells should be numeric (formulas, no #REF/#VALUE)
+        buf_raw = get_values(service, YEARLY, f"D{buffer_sr}:O{buffer_sr}")
+        buf_row = buf_raw[0] if buf_raw else []
+        all_numeric = all(
+            _is_numeric(str(c).replace(",", "").replace(" ", ""))
+            for c in buf_row
+        )
+        check("6c: All 12 monthly buffer cells are numeric (no errors) when year closed",
+              all_numeric, f"values={buf_row}")
+
+        # Buffer YTD (column P) should be non-zero
+        ytd_raw = get_values(service, YEARLY, f"P{buffer_sr}")
+        ytd_str = gcell(ytd_raw, 0, 0, "0").replace(",", "")
+        ytd_ok = _is_numeric(ytd_str) and float(ytd_str or "0") != 0
+        check("6c: Buffer YTD is non-zero when full year closed",
+              ytd_ok, f"YTD={ytd_str}")
+
+    finally:
+        # 6d: Restore original status row
+        svc_w.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{YEARLY}'!{STATUS_RANGE}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [orig_status]},
+        ).execute()
+        b4_restored = gcell(get_values(service, CCT, "B4"), 0, 0)
+        check("6d: Status row restored — CC Tracker B4 reverted to original",
+              True, f"B4={b4_restored!r}")
 
 
 def main():
@@ -261,6 +582,20 @@ def main():
             body={"values": [[jan_before]]},
         ).execute()
         check("Jan salary restored to original", True, f"{jan_before}")
+
+        # ── Phase 5: Integration — bank import, new category, new account ──────
+        # Python CLI scripts run here to simulate real CLI usage.
+        try:
+            phase5_integration(service, write_svc)
+        except Exception as exc:
+            check("Phase 5 integration", False, str(exc)[:120])
+
+        # ── Phase 6: End-to-end — close a month / close a year ─────────────────
+        # Pure API: write status row, verify CC Tracker XLOOKUP resolves correctly.
+        try:
+            phase6_month_year_close(service, write_svc, buffer_sr)
+        except Exception as exc:
+            check("Phase 6 month/year close", False, str(exc)[:120])
 
     except Exception as exc:
         check("Phase 4 write test", False, str(exc)[:120])
