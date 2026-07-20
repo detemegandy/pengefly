@@ -383,6 +383,7 @@ def build_yearly(sid):
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  INCOME")); row += 1
 
+    income_start_row = row
     for i, (name, monthly) in enumerate(SALARY.items()):
         bg = BLUE_PALE if i%2==0 else WHITE
         rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=bg)))
@@ -397,14 +398,17 @@ def build_yearly(sid):
             else:
                 dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
         row += 1
+    income_end_row = row - 1
 
     total_income = [SALARY["Andreas"][m] + SALARY["Mona"][m] for m in range(12)]
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=AMBER, bold=True)))
     dt.append((row, LABEL_COL, "Total income"))
     dt.append((row, DEFAULT_COL, total_income[0]))
-    for m, v in enumerate(total_income):
-        dt.append((row, mcol(m), v))
-    dt.append((row, YTD_COL, sum(total_income[:6])))
+    for m in range(12):
+        c = cletter(mcol(m))
+        dt.append((row, mcol(m), f"=SUM({c}{income_start_row+1}:{c}{income_end_row+1})"))
+    income_total_row = row
+    dt.append((row, YTD_COL, f"=SUM(D{row+1}:{cletter(mcol(5))}{row+1})"))
     row += 2  # +spacer
 
     # ── TRANSFERS ─────────────────────────────────────────────────────────────
@@ -413,6 +417,7 @@ def build_yearly(sid):
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  TRANSFERS  (from Joint Salary)")); row += 1
 
+    tx_start_row = row
     for i, (name, amount, acct) in enumerate(TRANSFERS):
         bg = BLUE_PALE if i%2==0 else WHITE
         rq.append(rpt(sid, row, LABEL_COL, 1, 3, fmt(bg=bg)))
@@ -431,17 +436,17 @@ def build_yearly(sid):
             prev = val
         rq.extend(tx_cfrules(sid, row))
         row += 1
+    tx_end_row = row - 1
 
     total_tx_default = sum(a for _, a, _ in TRANSFERS)
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=AMBER, bold=True)))
     dt.append((row, LABEL_COL, "Total transfers"))
     dt.append((row, DEFAULT_COL, total_tx_default))
     for m in range(12):
-        monthly_total = sum(SENT[i][m] for i in range(len(TRANSFERS)))
-        dt.append((row, mcol(m), monthly_total))
-    ytd_tx = sum(SENT[i][m] for i in range(len(TRANSFERS))
-                 for m in range(6) if MONTH_STATE[m] in ("closed", "open"))
-    dt.append((row, YTD_COL, ytd_tx))
+        c = cletter(mcol(m))
+        dt.append((row, mcol(m), f"=SUM({c}{tx_start_row+1}:{c}{tx_end_row+1})"))
+    tx_total_row = row
+    dt.append((row, YTD_COL, f"=SUM(D{row+1}:{cletter(mcol(5))}{row+1})"))
     row += 2  # +spacer
 
     # ── FIXED EXPENSES ────────────────────────────────────────────────────────
@@ -451,6 +456,7 @@ def build_yearly(sid):
     dt.append((row, 0, "  FIXED EXPENSES")); row += 1
 
     total_fixed = sum(a for _, a in FIXED)
+    fixed_start_row = row
     for i, (name, amount) in enumerate(FIXED):
         bg = BLUE_PALE if i%2==0 else WHITE
         rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=bg)))
@@ -460,13 +466,16 @@ def build_yearly(sid):
             rq.append(rpt(sid, row, mcol(m), 1, 1, fmt(bg=bg, halign="CENTER")))
             dt.append((row, mcol(m), amount))
         row += 1
+    fixed_end_row = row - 1
 
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=AMBER, bold=True)))
     dt.append((row, LABEL_COL, "Total fixed"))
     dt.append((row, DEFAULT_COL, total_fixed))
     for m in range(12):
-        dt.append((row, mcol(m), total_fixed))
-    dt.append((row, YTD_COL, total_fixed * 6))
+        c = cletter(mcol(m))
+        dt.append((row, mcol(m), f"=SUM({c}{fixed_start_row+1}:{c}{fixed_end_row+1})"))
+    fixed_total_row = row
+    dt.append((row, YTD_COL, f"=SUM(D{row+1}:{cletter(mcol(5))}{row+1})"))
     row += 2  # +spacer
 
     # ── FLEX BUDGET ───────────────────────────────────────────────────────────
@@ -479,11 +488,14 @@ def build_yearly(sid):
     total_flex_actual = sum(
         sum(a for a in actuals if a is not None) for _, _, actuals in FLEX
     )
+    flex_budget_rows = []   # 0-indexed row numbers of per-category budget rows
+    flex_actual_rows = []   # 0-indexed row numbers of per-category actual rows
 
     for i, (name, budgets, actuals) in enumerate(FLEX):
         bg_base = BLUE_PALE if i%2==0 else WHITE
 
         # Budget row
+        flex_budget_rows.append(row)
         rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=bg_base, bold=True)))
         dt.append((row, LABEL_COL, name))
         dt.append((row, DEFAULT_COL, budgets[0]))
@@ -500,6 +512,7 @@ def build_yearly(sid):
         row += 1
 
         # Actual row
+        flex_actual_rows.append(row)
         rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=bg_base, italic=True)))
         dt.append((row, LABEL_COL, "  ↳ actual"))
         for m in range(12):
@@ -527,17 +540,20 @@ def build_yearly(sid):
     dt.append((row, LABEL_COL, "Total flex budget"))
     dt.append((row, DEFAULT_COL, total_flex_budget))
     for m in range(12):
-        dt.append((row, mcol(m), sum(b[m] for _, b, _ in FLEX)))
-    dt.append((row, YTD_COL, sum(sum(b[:6]) for _, b, _ in FLEX)))
+        c    = cletter(mcol(m))
+        refs = ",".join(f"{c}{r+1}" for r in flex_budget_rows)
+        dt.append((row, mcol(m), f"=SUM({refs})"))
+    flex_budget_total_row = row
+    dt.append((row, YTD_COL, f"=SUM(D{row+1}:{cletter(mcol(5))}{row+1})"))
     row += 1
 
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=AMBER, italic=True)))
     dt.append((row, LABEL_COL, "  ↳ total actual"))
     for m in range(12):
-        month_actual = sum(a[m] for _, _, a in FLEX if a[m] is not None)
-        if month_actual:
-            dt.append((row, mcol(m), month_actual))
-    dt.append((row, YTD_COL, total_flex_actual))
+        c    = cletter(mcol(m))
+        refs = ",".join(f"{c}{r+1}" for r in flex_actual_rows)
+        dt.append((row, mcol(m), f"=SUM({refs})"))
+    dt.append((row, YTD_COL, f"=SUM(D{row+1}:{cletter(mcol(5))}{row+1})"))
     row += 2  # +spacer
 
     # ── BUFFER ────────────────────────────────────────────────────────────────
@@ -545,29 +561,29 @@ def build_yearly(sid):
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=BLUE_DARK, bold=True, fg=WHITE)))
     dt.append((row, 0, "  BUFFER")); row += 1
 
-    total_out_default = total_tx_default + total_fixed + total_flex_budget
+    buf_sr = row + 1  # 1-indexed sheet row for the buffer cells
+    rq.append(rpt(sid, row, JAN_COL, 1, 12, fmt(bg=GREEN, bold=True, halign="CENTER")))
+    rq.append({"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": row, "endRowIndex": row+1,
+                    "startColumnIndex": JAN_COL, "endColumnIndex": JAN_COL+12}],
+        "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA",
+                          "values": [{"userEnteredValue": f"=D{buf_sr}<0"}]},
+            "format": {"backgroundColor": RED_LIGHT},
+        }}, "index": 0}})
     for m in range(12):
-        income = SALARY["Andreas"][m] + SALARY["Mona"][m]
-        flex_out = sum(
-            (a[m] if a[m] is not None else b[m]) for _, b, a in FLEX
-        )
-        out    = total_tx_default + total_fixed + flex_out
-        buf    = income - out
-        bg     = GREEN if buf >= 0 else RED_LIGHT
-        rq.append(rpt(sid, row, mcol(m), 1, 1, fmt(bg=bg, bold=True, halign="CENTER")))
-        dt.append((row, mcol(m), buf))
+        c = cletter(mcol(m))
+        dt.append((row, mcol(m),
+                   f"={c}{income_total_row+1}"
+                   f"-{c}{tx_total_row+1}"
+                   f"-{c}{fixed_total_row+1}"
+                   f"-{c}{flex_budget_total_row+1}"))
 
-    buf_default = total_income[0] - total_out_default
-    ytd_buf     = sum(
-        (SALARY["Andreas"][m] + SALARY["Mona"][m]) -
-        (total_tx_default + total_fixed +
-         sum((a[m] if a[m] is not None else b[m]) for _, b, a in FLEX))
-        for m in range(6)
-    )
+    buf_default = total_income[0] - (total_tx_default + total_fixed + total_flex_budget)
     rq.append(rpt(sid, row, 0, 1, 3, fmt(bold=True)))
     dt.append((row, LABEL_COL, "Buffer (income − all out)"))
     dt.append((row, DEFAULT_COL, buf_default))
-    dt.append((row, YTD_COL, ytd_buf))
+    dt.append((row, YTD_COL, f"=SUM(D{buf_sr}:{cletter(mcol(5))}{buf_sr})"))
     row += 1
 
     rq.append(rpt(sid, row, 0, 1, NCOLS, fmt(bg=YELLOW, italic=True)))
