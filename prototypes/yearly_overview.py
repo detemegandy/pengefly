@@ -205,15 +205,22 @@ def mcol(m):
     """0-indexed month → column index."""
     return JAN_COL + m
 
-def to_a1(row, col):
-    col_letter = ""
-    c = col
+def cletter(col):
+    """Column index → A1 letter string (e.g. 3 → 'D')."""
+    s = ""
     while True:
-        col_letter = chr(ord('A') + c % 26) + col_letter
-        c = c // 26 - 1
-        if c < 0:
+        s = chr(ord('A') + col % 26) + s
+        col = col // 26 - 1
+        if col < 0:
             break
-    return f"'{TAB_NAME}'!{col_letter}{row+1}"
+    return s
+
+def cell_ref(row_0idx, col_0idx):
+    """Bare A1 ref (no sheet prefix) for intra-sheet formula strings."""
+    return f"{cletter(col_0idx)}{row_0idx+1}"
+
+def to_a1(row, col):
+    return f"'{TAB_NAME}'!{cletter(col)}{row+1}"
 
 
 def add_legend(sid, rq, dt, tx_row, fixed_row, flex_row):
@@ -319,7 +326,11 @@ def build_yearly(sid):
         for m, v in enumerate(monthly):
             rq.append(rpt(sid, row, mcol(m), 1, 1,
                           fmt(bg=bg, halign="CENTER")))
-            dt.append((row, mcol(m), v))
+            prev_v = monthly[m-1] if m > 0 else None
+            if m == 0 or v != prev_v:
+                dt.append((row, mcol(m), v))
+            else:
+                dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
         row += 1
 
     total_income = [SALARY["Andreas"][m] + SALARY["Mona"][m] for m in range(12)]
@@ -358,7 +369,10 @@ def build_yearly(sid):
                 cell_bg, cell_fg = GREEN, GREEN_DARK
             rq.append(rpt(sid, row, mcol(m), 1, 1,
                           fmt(bg=cell_bg, fg=cell_fg, halign="RIGHT")))
-            dt.append((row, mcol(m), val))
+            if m == 0 or val != prev:
+                dt.append((row, mcol(m), val))
+            else:
+                dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
             prev = val
         row += 1
 
@@ -429,7 +443,10 @@ def build_yearly(sid):
                 cell_bg, cell_fg = bg_base, None
             f = fmt(bg=cell_bg, bold=True, halign="CENTER", fg=cell_fg)
             rq.append(rpt(sid, row, mcol(m), 1, 1, f))
-            dt.append((row, mcol(m), budget))
+            if m == 0 or budget != prev_b:
+                dt.append((row, mcol(m), budget))
+            else:
+                dt.append((row, mcol(m), f"={cell_ref(row, mcol(m-1))}"))
         dt.append((row, YTD_COL, sum(budgets[:6])))
         row += 1
 

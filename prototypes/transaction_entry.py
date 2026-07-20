@@ -66,16 +66,21 @@ DATA_ROW = 14   # 1-indexed first transaction row
 ROWS     = 150  # max transaction rows to reserve for formatting
 
 # Credit card minimum payments for Jun 2026 — auto-populated, flagged for review.
-# Min payment = MAX(ROUND(balance × min_pct), floor).
-# EIKA: MAX(ROUND(45000 × 0.03), 250) = 1,350
-# Mona: MAX(ROUND(28000 × 0.03), 250) = 840
+# Amounts are live formulas referencing the CC Tracker tab so they update when the
+# statement balance or min-payment % changes there.
+# EIKA cells: B5=statement balance, B9=min%, B10=floor
+# Mona cells: H5=statement balance, H9=min%, H10=floor
+_CT = "'Credit Card Tracker'"
+_EIKA_MIN = f"=MAX({_CT}!B10,ROUND({_CT}!B5*{_CT}!B9,0))"
+_MONA_MIN = f"=MAX({_CT}!H10,ROUND({_CT}!H5*{_CT}!H9,0))"
+
 _CC_PAYMENTS = [
-    ("Shared Card", "30.06", "⬇ CC min. payment — EIKA",     1350, "", "This month",
+    ("Shared Card", "30.06", "⬇ CC min. payment — EIKA",    _EIKA_MIN, "", "This month",
      "Needs discussion",
-     "Auto-added: EIKA statement 45,000 × 3% min. Review actual payment at month close."),
-    ("Shared Card", "30.06", "⬇ CC min. payment — Mona DNB",  840, "", "This month",
+     "Auto-added: min. payment from CC Tracker (statement balance × rate, with floor). Review at month close."),
+    ("Shared Card", "30.06", "⬇ CC min. payment — Mona DNB", _MONA_MIN, "", "This month",
      "Needs discussion",
-     "Auto-added: Mona DNB statement 28,000 × 3% min. Review actual payment at month close."),
+     "Auto-added: min. payment from CC Tracker (statement balance × rate, with floor). Review at month close."),
 ]
 
 # All sample data — what the CLI produces after importing all three card exports,
