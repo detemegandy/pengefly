@@ -191,8 +191,8 @@ def build_all_cards(sid):
     rq.append(rpt(sid, 1, 0, 1, NCOLS, fmt(bg=YELLOW_SOFT, italic=True)))
     dt.append({"range": "A2",
                "values": [["  CLI imports each card export here with Card pre-filled. "
-                            "Then use the per-card filter views (View → Filter views) to annotate: "
-                            "Category, Settlement, Notes. Everything here is editable. "
+                            "To switch to a per-card view: Data → Change view → [card name]. "
+                            "Everything here is editable — annotate Category, Settlement, Notes in any view. "
                             "To filter manually: Data → Create a filter."]]}),
 
     # Row 2: budget summary header
@@ -391,7 +391,7 @@ def main():
     print("\nDone — single sheet 'All Cards':")
     print("  - Budget summary rows 1-12")
     print("  - All transactions rows 14+ (all cards mixed, sorted by date)")
-    print("  - Filter views: View → Filter views → [Shared Card / Shared Credit / Personal]")
+    print("  - Filter views: Data → Change view → [Shared Card / Shared Credit / Personal]")
     print("  - All cells editable — CLI pre-fills Card column on import")
     print("\nTo filter manually: Data → Create a filter")
 
