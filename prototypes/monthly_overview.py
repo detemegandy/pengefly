@@ -312,6 +312,30 @@ def _apply_styling(svc, sid):
             "top": b, "bottom": b, "left": b, "right": b,
         }})
 
+        # Transaction data rows: background + left/right borders to stay visually
+        # distinct from adjacent category blocks.
+        # Alternating very-light-blue vs near-white so neighbours are distinct.
+        tx_bg = LIGHT_BLUE if i % 2 == 0 else rgb(248, 250, 255)
+        TRANS_END = TRANS_DAT + 80   # cover up to 80 transaction rows
+        reqs.append({"repeatCell": {
+            "range": {"sheetId": sid,
+                      "startRowIndex": TRANS_DAT, "endRowIndex": TRANS_END,
+                      "startColumnIndex": cs, "endColumnIndex": ce},
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": tx_bg,
+                "textFormat": {"fontSize": 9},
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat)",
+        }})
+        b_med = {"style": "SOLID_MEDIUM",
+                 "colorStyle": {"rgbColor": BORDER_CLR}}
+        reqs.append({"updateBorders": {
+            "range": {"sheetId": sid,
+                      "startRowIndex": TRANS_DAT, "endRowIndex": TRANS_END,
+                      "startColumnIndex": cs, "endColumnIndex": ce},
+            "left": b_med, "right": b_med,
+        }})
+
     svc.spreadsheets().batchUpdate(
         spreadsheetId=SHEET_ID, body={"requests": reqs}
     ).execute()
