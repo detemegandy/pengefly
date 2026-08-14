@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Source data exports (CSV dumps from M&A Expense — not for VCS)
+data/
+
+# Private prototype config — real account numbers and salary data
+# Copy prototypes/private.py.example → prototypes/private.py and fill in values
+prototypes/private.py
